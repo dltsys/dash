@@ -423,20 +423,23 @@ void static BitcoinMiner(const CChainParams& chainparams, CConnman& connman)
                 // Busy-wait for the network to come online so we don't waste time mining
                 // on an obsolete chain. In regtest mode we expect to fly solo.
                 do {
-                    bool fvNodesEmpty = connman.GetNodeCount(CConnman::CONNECTIONS_ALL) == 0;
-                    if (!fvNodesEmpty && !IsInitialBlockDownload() && masternodeSync.IsSynced())
+                    int currentNodes = connman.GetNodeCount(CConnman::CONNECTIONS_ALL);
+                    if (currentNodes >= 0)
                         break;
+		    LogPrintf("DashMiner - waiting for enough nodes...");
                     MilliSleep(1000);
                 } while (true);
             }
-
 
             //
             // Create new block
             //
             unsigned int nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
             CBlockIndex* pindexPrev = chainActive.Tip();
-            if(!pindexPrev) break;
+            if(!pindexPrev) {
+		LogPrintf("DashMiner -- no pindexPrev, stopping mining");
+		break;
+	    }
 
             std::unique_ptr<CBlockTemplate> pblocktemplate(CreateNewBlock(chainparams, coinbaseScript->reserveScript));
             if (!pblocktemplate.get())
@@ -488,19 +491,29 @@ void static BitcoinMiner(const CChainParams& chainparams, CConnman& connman)
                 // Check for stop or if block needs to be rebuilt
                 boost::this_thread::interruption_point();
                 // Regtest mode doesn't require peers
-                if (connman.GetNodeCount(CConnman::CONNECTIONS_ALL) == 0 && chainparams.MiningRequiresPeers())
+                if (connman.GetNodeCount(CConnman::CONNECTIONS_ALL) == 0 && chainparams.MiningRequiresPeers()) {
+		    LogPrintf("DashMiner -- no peers");
                     break;
-                if (pblock->nNonce >= 0xffff0000)
+		}
+                if (pblock->nNonce >= 0xffff0000) {
+		    LogPrintf("DashMiner -- nonce reached");
                     break;
-                if (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 60)
+		}
+                if (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 60) {
+		    LogPrintf("DashMiner -- invalid mempool time");
                     break;
-                if (pindexPrev != chainActive.Tip())
+		}
+                if (pindexPrev != chainActive.Tip()) {
+		    LogPrintf("DashMiner -- invalid chain tip");
                     break;
+		}
 
                 // Update nTime every few seconds
-                if (UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev) < 0)
+                if (UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev) < 0) {
+		    LogPrintf("DashMiner -- failed to update time");
                     break; // Recreate the block if the clock has run backwards,
                            // so that we can use the correct time.
+		}
                 if (chainparams.GetConsensus().fPowAllowMinDifficultyBlocks)
                 {
                     // Changing pblock->nTime can change work required on testnet:
@@ -508,6 +521,8 @@ void static BitcoinMiner(const CChainParams& chainparams, CConnman& connman)
                 }
             }
         }
+
+	LogPrintf("DashMiner -- exit");
     }
     catch (const boost::thread_interrupted&)
     {
